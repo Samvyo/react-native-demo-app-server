@@ -13,17 +13,14 @@ app.use(express.json());
 
 const accessKey = process.env.ACCESS_KEY;
 const secretAccessKey = process.env.SECRET_ACCESS_KEY;
-// const serverUrl = "https://test-api-v2.samvyo.com";
-// const serverUrl = "https://api.samvyo.com";
-// const serverUrl = "https://test-api.videoedge.io";
 const serverUrl = "https://localhost:4100";
 
 // const privateKey = fs.readFileSync(
-//   path.resolve(__dirname, "server.key"),
+//   path.resolve(__dirname, "192.168.0.101+2-key.pem"),
 //   "utf8"
 // );
 // const certificate = fs.readFileSync(
-//   path.resolve(__dirname, "server.crt"),
+//   path.resolve(__dirname, "192.168.0.101+2.pem"),
 //   "utf8"
 // );
 
@@ -34,6 +31,7 @@ const serverUrl = "https://localhost:4100";
 
 app.post("/api/create-session-token", async (req, res) => {
   const { roomId } = req.body;
+  console.log("inside create-session-token");
   try {
     const response = await axios.post(
       `${serverUrl}/api/siteSetting/sessionToken`,
