@@ -13,7 +13,8 @@ app.use(express.json());
 
 const accessKey = process.env.ACCESS_KEY;
 const secretAccessKey = process.env.SECRET_ACCESS_KEY;
-const serverUrl = "https://localhost:4100";
+// const serverUrl = "https://localhost:4100";
+const serverUrl = "https://api.samvyo.com";
 
 // const privateKey = fs.readFileSync(
 //   path.resolve(__dirname, "192.168.0.101+2-key.pem"),
