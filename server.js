@@ -15,6 +15,7 @@ const accessKey = process.env.ACCESS_KEY;
 const secretAccessKey = process.env.SECRET_ACCESS_KEY;
 const serverUrl = "https://localhost:4100";
 
+// const serverUrl = "https://api.samvyo.com";
 // const privateKey = fs.readFileSync(
 //   path.resolve(__dirname, "192.168.0.101+2-key.pem"),
 //   "utf8"
@@ -63,7 +64,39 @@ app.post("/api/create-session-token", async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 3600;
+app.get("/api/private-api-access-token", async (req, res) => {
+  console.log("inside private-api-access-token");
+  try {
+    const response = await axios.post(
+      `${serverUrl}/api/siteSetting/getAuthToken`,
+      {
+        accessKey,
+        secretAccessKey,
+      }
+    );
+
+    if (response.data.authToken.ok) {
+      return res.status(200).send({
+        success: true,
+        message: "Auth token fetched successfully",
+        token: response.data.authToken.token,
+      });
+    }
+
+    return res.status(400).send({
+      success: false,
+      message: "Failed to fetch auth token",
+    });
+  } catch (error) {
+    console.error("Error getting auth token:", error);
+    console.log("Error message:", error.message);
+    return res
+      .status(500)
+      .json({ error: "Internal Server Error", success: false });
+  }
+});
+
+const port = process.env.PORT || 5200;
 
 app.get("/", (req, res) => {
   res.send("Server is running on port " + port);
