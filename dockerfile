@@ -1,0 +1,26 @@
+FROM node:18-alpine
+
+# ARG NODE_ENV
+ARG NODE_ENV
+ARG ACCESS_KEY
+ARG SECRET_ACCESS_KEY
+ARG PORT
+# # # # Set environment variables
+# ENV NODE_ENV=$NODE_ENV 
+
+ENV NODE_ENV=$NODE_ENV
+ENV ACCESS_KEY=$ACCESS_KEY
+ENV SECRET_ACCESS_KEY=$SECRET_ACCESS_KEY
+ENV PORT=$PORT
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install --legacy-peer-deps
+
+COPY . .
+
+EXPOSE 5100
+
+CMD ["npm", "run", "start"]
