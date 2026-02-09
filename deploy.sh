@@ -23,8 +23,8 @@ sudo docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
 echo "Building Docker image with tag: demo-server-$ENV-$VERSION"
 sudo docker build \
   --build-arg NODE_ENV=$NODE_ENV \
-  --build-arg ACCESS_KEY=$ACCESS_KEY \
-  --build-arg SECRET_ACCESS_KEY=$SECRET_ACCESS_KEY \
+  --build-arg SDK_BACKEND_SECRET=$SDK_BACKEND_SECRET \
+  --build-arg MEETING_PLATFORM_JWT_SECRET=$MEETING_PLATFORM_JWT_SECRET \
   --build-arg SERVER_URL=$SERVER_URL \
   --build-arg PORT=$PORT \
   -t $CI_REGISTRY:demo-server-$ENV-$VERSION \
