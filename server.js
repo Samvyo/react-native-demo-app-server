@@ -71,7 +71,6 @@ app.post("/api/create-session-token", async (req, res) => {
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
           roomId,
-          uuid,
           accessKey: ACCESS_KEY,
           secretAccessKey: SECRET_ACCESS_KEY,
           orgIdParam: orgId,
