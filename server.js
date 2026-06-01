@@ -163,6 +163,17 @@ app.get("/", (req, res) => {
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-app.listen(port, () => {
-  console.log(`Secure server running on port ${port}`);
-});
+// Item-7 LAN: serve HTTPS (the browser meeting app at :5174 is HTTPS, so an
+// HTTP token endpoint would be blocked as mixed content). mkcert leaf cert.
+const CERT_DIR = "/home/saurav/Work/samvyo/samvyo-app-autoscaler/.claude/tier-c-testing/certs";
+https
+  .createServer(
+    {
+      key: fs.readFileSync(path.join(CERT_DIR, "server.key")),
+      cert: fs.readFileSync(path.join(CERT_DIR, "server.crt")),
+    },
+    app
+  )
+  .listen(port, "0.0.0.0", () => {
+    console.log(`Secure (HTTPS) server running on port ${port}`);
+  });
