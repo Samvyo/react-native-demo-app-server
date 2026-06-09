@@ -99,10 +99,44 @@ app.post("/api/create-session-token", async (req, res) => {
     }
 
     if (response.data && response.data.success) {
+      // Dashboard-mode support: resolve the samvyo room_setting _id ("rid") for
+      // this roomId so the client can join as a dashboard-backed room (the
+      // autoscaler marks roomStatus occupied only when a join carries rid).
+      // Best-effort: an SDK-mode / ad-hoc roomId that isn't a configured
+      // room_setting simply yields rid=null and the client joins as before.
+      // fetchByQuery is uuid+room keyed (SELECT a.* → includes _id) and needs
+      // no auth; uuid comes from the request or is derived from the org key.
+      let rid = null;
+      let roomDisplayName = null;
+      try {
+        const orgUuid =
+          uuid || (ACCESS_KEY ? ACCESS_KEY.replace(/-\d+-\d+$/, "") : undefined);
+        if (orgUuid) {
+          const roomRes = await axios.post(
+            `${serverUrl}/api/roomSetting/fetchByQuery`,
+            { uuid: orgUuid, room: roomId },
+            { timeout: 8000 }
+          );
+          const rs = roomRes.data && roomRes.data.roomSetting;
+          const record = Array.isArray(rs) ? rs[0] : rs;
+          if (record && record._id) {
+            rid = record._id;
+            // Carry the configured room name so the call logs + recordings show
+            // the dashboard room's display name (autoscaler uses the client-sent
+            // roomDisplayName for _displayName, not the fetched room_setting).
+            roomDisplayName = record.name || null;
+          }
+        }
+      } catch (ridErr) {
+        console.log("rid resolution skipped:", ridErr.message);
+      }
+
       return res.status(200).send({
         success: true,
         message: "Session token fetched successfully",
         sessionToken: response.data.sessionToken,
+        rid,
+        roomDisplayName,
       });
     }
 
