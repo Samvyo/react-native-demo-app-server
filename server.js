@@ -21,7 +21,12 @@ const SECRET_ACCESS_KEY = process.env.SECRET_ACCESS_KEY;
 app.post("/api/create-session-token", async (req, res) => {
   console.log("inside create-session-token");
 
-  const { roomId, uuid, orgId } = req.body;
+  const { roomId, uuid, orgId, sdkMode } = req.body;
+  // Dashboard mode (sdkMode === false) mints a uuid/room session token with NO
+  // access key/secret key — the autoscaler attributes the recording to the
+  // room's owners so it surfaces under meeting logs. SDK mode (default) uses the
+  // access key + secret key, and the recording is attributed to the access key.
+  const dashboardMode = sdkMode === false;
   if (!(ACCESS_KEY && SECRET_ACCESS_KEY)) {
     const authHeader = req.headers["authorization"] || "";
     const token = authHeader.startsWith("Bearer ")
@@ -65,8 +70,31 @@ app.post("/api/create-session-token", async (req, res) => {
 
   try {
     let response;
-    // If ACCESS_KEY and SECRET_ACCESS_KEY are configured, use the default
-    if (ACCESS_KEY && SECRET_ACCESS_KEY) {
+    if (dashboardMode) {
+      // Dashboard mode: mint via the uuid/room path — NO access key/secret key.
+      // The app-server resolves the room_setting from (uuid, roomId), tags the
+      // token type="Normal" and roomOwnerId=room owners, and returns rid +
+      // roomDisplayName. Recording is attributed to the meeting, not the SDK key.
+      if (!uuid) {
+        return res.status(400).send({
+          success: false,
+          message: "uuid is required for dashboard mode",
+        });
+      }
+      response = await axios.post(
+        `${serverUrl}/api/siteSetting/sessionToken`,
+        {
+          roomId,
+          uuid,
+        },
+        {
+          headers: {
+            "x-sdk-backend-secret": sdkBackendSecret,
+          },
+        }
+      );
+    } else if (ACCESS_KEY && SECRET_ACCESS_KEY) {
+      // SDK mode: access key + secret key path.
       response = await axios.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
@@ -99,44 +127,17 @@ app.post("/api/create-session-token", async (req, res) => {
     }
 
     if (response.data && response.data.success) {
-      // Dashboard-mode support: resolve the samvyo room_setting _id ("rid") for
-      // this roomId so the client can join as a dashboard-backed room (the
-      // autoscaler marks roomStatus occupied only when a join carries rid).
-      // Best-effort: an SDK-mode / ad-hoc roomId that isn't a configured
-      // room_setting simply yields rid=null and the client joins as before.
-      // fetchByQuery is uuid+room keyed (SELECT a.* → includes _id) and needs
-      // no auth; uuid comes from the request or is derived from the org key.
-      let rid = null;
-      let roomDisplayName = null;
-      try {
-        const orgUuid =
-          uuid || (ACCESS_KEY ? ACCESS_KEY.replace(/-\d+-\d+$/, "") : undefined);
-        if (orgUuid) {
-          const roomRes = await axios.post(
-            `${serverUrl}/api/roomSetting/fetchByQuery`,
-            { uuid: orgUuid, room: roomId },
-            { timeout: 8000 }
-          );
-          const rs = roomRes.data && roomRes.data.roomSetting;
-          const record = Array.isArray(rs) ? rs[0] : rs;
-          if (record && record._id) {
-            rid = record._id;
-            // Carry the configured room name so the call logs + recordings show
-            // the dashboard room's display name (autoscaler uses the client-sent
-            // roomDisplayName for _displayName, not the fetched room_setting).
-            roomDisplayName = record.name || null;
-          }
-        }
-      } catch (ridErr) {
-        console.log("rid resolution skipped:", ridErr.message);
-      }
-
+      // Dashboard-mode support: the session-token endpoint now resolves the
+      // room_setting itself and returns rid (room_setting._id) + roomDisplayName
+      // alongside the token, so the client can join as a dashboard-backed room
+      // (the autoscaler marks roomStatus occupied only when a join carries rid)
+      // without a separate roomSetting fetch. null for ad-hoc SDK roomIds.
       return res.status(200).send({
         success: true,
         message: "Session token fetched successfully",
         sessionToken: response.data.sessionToken,
-        rid,
-        roomDisplayName,
+        rid: response.data.rid ?? null,
+        roomDisplayName: response.data.roomDisplayName ?? null,
       });
     }
 
