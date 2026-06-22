@@ -138,6 +138,10 @@ app.post("/api/create-session-token", async (req, res) => {
         sessionToken: response.data.sessionToken,
         rid: response.data.rid ?? null,
         roomDisplayName: response.data.roomDisplayName ?? null,
+        // Cascading M0 (Point 2) — pass the org's cascading regions through for
+        // the SDK region picker. Response-body only; not part of the token.
+        cascading: response.data.cascading ?? false,
+        cascadingRegions: response.data.cascadingRegions ?? [],
       });
     }
 
