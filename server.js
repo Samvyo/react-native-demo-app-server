@@ -21,7 +21,12 @@ const SECRET_ACCESS_KEY = process.env.SECRET_ACCESS_KEY;
 app.post("/api/create-session-token", async (req, res) => {
   console.log("inside create-session-token");
 
-  const { roomId, uuid, orgId, sdkMode } = req.body;
+  // `probe` forwards to the app-server as a METADATA READ — it resolves the
+  // room + region config and returns them without creating a call_record or
+  // issuing a token. The lobby uses it to populate the region dropdown; before
+  // it existed, every lobby view minted a real session and left behind a
+  // call_record nobody joined and nothing could close.
+  const { roomId, uuid, orgId, sdkMode, probe } = req.body;
   // Dashboard mode (sdkMode === false) mints a uuid/room session token with NO
   // access key/secret key — the autoscaler attributes the recording to the
   // room's owners so it surfaces under meeting logs. SDK mode (default) uses the
@@ -102,6 +107,7 @@ app.post("/api/create-session-token", async (req, res) => {
           accessKey: ACCESS_KEY,
           secretAccessKey: SECRET_ACCESS_KEY,
           orgIdParam: orgId,
+          probe,
         },
         {
           headers: {
@@ -117,6 +123,7 @@ app.post("/api/create-session-token", async (req, res) => {
           roomId,
           uuid,
           orgId,
+          probe,
         },
         {
           headers: {
@@ -124,6 +131,20 @@ app.post("/api/create-session-token", async (req, res) => {
           },
         }
       );
+    }
+
+    // A probe answer has no token by design; returning it through the normal
+    // branch below would emit `sessionToken: undefined` and read as a failure.
+    if (response.data && response.data.success && response.data.probe === true) {
+      return res.status(200).send({
+        success: true,
+        probe: true,
+        message: "Room metadata fetched (no session created)",
+        rid: response.data.rid ?? null,
+        roomDisplayName: response.data.roomDisplayName ?? null,
+        cascading: response.data.cascading ?? false,
+        cascadingRegions: response.data.cascadingRegions ?? [],
+      });
     }
 
     if (response.data && response.data.success) {
