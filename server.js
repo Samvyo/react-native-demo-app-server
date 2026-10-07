@@ -86,15 +86,26 @@ app.post("/api/create-session-token", async (req, res) => {
           message: "uuid is required for dashboard mode",
         });
       }
+      // The ROLE: the app-server grants moderator on a dashboard room only to a
+      // logged-in owner of it, proved by the user's own token (dashboard login
+      // or the dashboard's temp_auth handover). The browser's Authorization
+      // header carries the meeting-platform JWT, so the user's token rides
+      // X-Samvyo-User-Token and is forwarded as Authorization. Absent → the
+      // app-server grants participant.
+      const userToken = String(req.headers["x-samvyo-user-token"] || "")
+        .replace(/^Bearer\s+/i, "")
+        .trim();
       response = await axios.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
           roomId,
           uuid,
+          probe,
         },
         {
           headers: {
             "x-sdk-backend-secret": sdkBackendSecret,
+            ...(userToken ? { Authorization: `Bearer ${userToken}` } : {}),
           },
         }
       );
