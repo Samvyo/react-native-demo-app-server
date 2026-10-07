@@ -1,19 +1,15 @@
 FROM node:18-alpine
 
-# ARG NODE_ENV
-ARG NODE_ENV
-ARG PORT
-ARG SERVER_URL
-ARG SDK_BACKEND_SECRET
-ARG MEETING_PLATFORM_JWT_SECRET
-# # # # Set environment variables
-# ENV NODE_ENV=$NODE_ENV 
+# No configuration in the image. This file used to take SDK_BACKEND_SECRET and
+# MEETING_PLATFORM_JWT_SECRET as build args and set them as ENV, so
+# `docker inspect` on the image printed them. The environment arrives at RUN
+# time instead — server.js reads it through dotenv or the process env:
+#   docker run --env-file /etc/samvyo/demo-server.env -p 5100:5100 <image>
+# with SERVER_URL, SDK_BACKEND_SECRET, MEETING_PLATFORM_JWT_SECRET, PORT, and
+# CERT_DIR (mount it) for HTTPS, or none for HTTP behind a TLS proxy.
+# .dockerignore keeps every .env* file out of the build context.
+ENV NODE_ENV=production
 
-ENV NODE_ENV=$NODE_ENV
-ENV PORT=$PORT
-ENV SERVER_URL=$SERVER_URL
-ENV SDK_BACKEND_SECRET=$SDK_BACKEND_SECRET
-ENV MEETING_PLATFORM_JWT_SECRET=$MEETING_PLATFORM_JWT_SECRET
 WORKDIR /app
 
 COPY package*.json ./

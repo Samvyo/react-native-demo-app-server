@@ -4,6 +4,7 @@ const cors = require("cors");
 const path = require("path");
 const app = express();
 const dotEnv = require("dotenv");
+const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const jwt = require("jsonwebtoken");
@@ -232,19 +233,35 @@ app.get("/", (req, res) => {
   res.send("Server is running on port " + port);
 });
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+// Calls to the app-server (SERVER_URL) verify its certificate unless this is
+// set — only a LAN bench whose app-server has a self-signed certificate needs
+// it. It used to be forced on for every deployment.
+if (process.env.ALLOW_INSECURE_UPSTREAM_TLS === "true") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
 
-// Item-7 LAN: serve HTTPS (the browser meeting app at :5174 is HTTPS, so an
-// HTTP token endpoint would be blocked as mixed content). mkcert leaf cert.
-const CERT_DIR = "/home/saurav/Work/samvyo/samvyo-app-autoscaler/.claude/tier-c-testing/certs";
-https
-  .createServer(
-    {
-      key: fs.readFileSync(path.join(CERT_DIR, "server.key")),
-      cert: fs.readFileSync(path.join(CERT_DIR, "server.crt")),
-    },
-    app
-  )
-  .listen(port, "0.0.0.0", () => {
-    console.log(`Secure (HTTPS) server running on port ${port}`);
+// TLS. The meeting UI is HTTPS, so a browser-facing HTTP token endpoint would be
+// blocked as mixed content: serve HTTPS from CERT_DIR (server.key + server.crt),
+// or plain HTTP when TLS ends in front of this (nginx on a cloud host).
+//   CERT_DIR set     → HTTPS from it; a missing file is fatal.
+//   CERT_DIR unset   → the LAN bench's mkcert directory if it exists, else HTTP.
+// The bench path used to be the only option, so the server crashed anywhere else.
+const BENCH_CERT_DIR = "/home/saurav/Work/samvyo/samvyo-app-autoscaler/.claude/tier-c-testing/certs";
+const CERT_DIR = process.env.CERT_DIR || (fs.existsSync(path.join(BENCH_CERT_DIR, "server.key")) ? BENCH_CERT_DIR : "");
+if (CERT_DIR) {
+  https
+    .createServer(
+      {
+        key: fs.readFileSync(path.join(CERT_DIR, "server.key")),
+        cert: fs.readFileSync(path.join(CERT_DIR, "server.crt")),
+      },
+      app
+    )
+    .listen(port, "0.0.0.0", () => {
+      console.log(`Secure (HTTPS) server running on port ${port}`);
+    });
+} else {
+  http.createServer(app).listen(port, "0.0.0.0", () => {
+    console.log(`HTTP server running on port ${port} (no CERT_DIR: TLS must end in front of it)`);
   });
+}

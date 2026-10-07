@@ -1,0 +1,9 @@
+# No environment file or key may reach an image layer (COPY . .): the
+# environment and any certificate are supplied at run time.
+node_modules
+.git
+.vscode
+.env
+.env.*
+*.key
+*.pem
