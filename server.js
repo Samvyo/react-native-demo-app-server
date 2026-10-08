@@ -175,6 +175,11 @@ app.post("/api/create-session-token", async (req, res) => {
         // the SDK region picker. Response-body only; not part of the token.
         cascading: response.data.cascading ?? false,
         cascadingRegions: response.data.cascadingRegions ?? [],
+        // O17 — the granted role and, when the app-server fell back to
+        // participant, why (e.g. token_expired). The customer UI uses it to say
+        // "your session expired" instead of showing a role error.
+        roleGrant: response.data.roleGrant ?? null,
+        roleFallback: response.data.roleFallback ?? null,
       });
     }
 
