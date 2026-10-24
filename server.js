@@ -33,6 +33,46 @@ app.post("/api/create-session-token", async (req, res) => {
   // room's owners so it surfaces under meeting logs. SDK mode (default) uses the
   // access key + secret key, and the recording is attributed to the access key.
   const dashboardMode = sdkMode === false;
+
+  // Direct view — a C++ camera's PRESENCE token. The camera POSTs only
+  // `{peerId}` to this same AUTH_RELAY_URL (cpp-sdk auth::FetchPresenceToken)
+  // and expects `{success, presenceToken}`. Minted with this backend's org keys:
+  // the device never holds anything that can mint (autoscaler
+  // .claude/direct-view/PLAN.md §4.2). No roomId = not a session request.
+  const { peerId } = req.body;
+  if (!roomId && peerId) {
+    if (!(ACCESS_KEY && SECRET_ACCESS_KEY)) {
+      return res.status(400).send({
+        success: false,
+        message: "presence tokens need ACCESS_KEY / SECRET_ACCESS_KEY",
+      });
+    }
+    try {
+      const r = await axios.post(
+        `${serverUrl}/api/directView/presenceToken`,
+        { accessKey: ACCESS_KEY, secretAccessKey: SECRET_ACCESS_KEY, cameraId: peerId },
+        { validateStatus: () => true }
+      );
+      if (r.status === 200 && r.data && r.data.presenceToken) {
+        return res.status(200).send({
+          success: true,
+          presenceToken: r.data.presenceToken,
+          expiresAt: r.data.expiresAt ?? null,
+        });
+      }
+      // 503 = the app-server has no direct-view signing key; 400
+      // CAMERA_ID_INVALID = the peerId is not URL-safe. Passed through.
+      return res.status(r.status === 200 ? 502 : r.status).send({
+        success: false,
+        code: r.data?.code ?? null,
+        message: r.data?.message || "Failed to mint presence token",
+      });
+    } catch (error) {
+      console.error("Error minting presence token:", error.message);
+      return res.status(502).send({ success: false, message: "app-server unreachable" });
+    }
+  }
+
   if (!(ACCESS_KEY && SECRET_ACCESS_KEY)) {
     const authHeader = req.headers["authorization"] || "";
     const token = authHeader.startsWith("Bearer ")
