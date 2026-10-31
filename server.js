@@ -27,7 +27,7 @@ app.post("/api/create-session-token", async (req, res) => {
   // issuing a token. The lobby uses it to populate the region dropdown; before
   // it existed, every lobby view minted a real session and left behind a
   // call_record nobody joined and nothing could close.
-  const { roomId, uuid, orgId, sdkMode, probe } = req.body;
+  const { roomId, uuid, orgId, sdkMode, probe, invite } = req.body;
   // Dashboard mode (sdkMode === false) mints a uuid/room session token with NO
   // access key/secret key — the autoscaler attributes the recording to the
   // room's owners so it surfaces under meeting logs. SDK mode (default) uses the
@@ -142,6 +142,10 @@ app.post("/api/create-session-token", async (req, res) => {
           roomId,
           uuid,
           probe,
+          // A room invite link token (`?inv=`) — stands in for a dashboard
+          // room's password; the app-server verifies it at mint. Dashboard mode
+          // only: an access-key session is never held to a dashboard password.
+          ...(invite ? { invite } : {}),
         },
         {
           headers: {
@@ -220,6 +224,10 @@ app.post("/api/create-session-token", async (req, res) => {
         // "your session expired" instead of showing a role error.
         roleGrant: response.data.roleGrant ?? null,
         roleFallback: response.data.roleFallback ?? null,
+        // Whether the room invite sent was honoured (null = none sent), and
+        // why not — the meeting UI asks for the password when it was refused.
+        inviteAccepted: response.data.inviteAccepted ?? null,
+        inviteRefusal: response.data.inviteRefusal ?? null,
       });
     }
 
