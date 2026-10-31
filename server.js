@@ -12,6 +12,17 @@ const jwt = require("jsonwebtoken");
 dotEnv.config();
 const { authenticateCaller } = require("./relayAuth");
 const { resolveCaller, makeRateLimiter, corsOriginsFrom, ANONYMOUS_WARNING } = require("./relayGuard");
+const { buildAuthenticator } = require("./relayChecks");
+
+// Who may use the access key: RELAY_AUTH = device, jwt and/or custom (relayAuth.js).
+// A misconfiguration stops the relay here rather than at the first camera.
+let callerCheck;
+try {
+  callerCheck = buildAuthenticator(process.env, { authenticateCaller });
+} catch (e) {
+  console.error(`FATAL: ${e.message}`);
+  process.exit(1);
+}
 
 // Which browser origins may call this relay (your meeting UI). Unset = any,
 // which a camera-only relay does not care about but a web one should set.
@@ -31,9 +42,9 @@ const RELAY_ALLOW_ANONYMOUS = process.env.RELAY_ALLOW_ANONYMOUS === "true";
 const rateLimit = makeRateLimiter({ perMinute: parseInt(process.env.RELAY_RATE_LIMIT_PER_MIN || "60", 10) });
 if (process.env.RELAY_TRUST_PROXY) app.set("trust proxy", process.env.RELAY_TRUST_PROXY);
 
-// May this request use the org's access key, and with what role? relayAuth.js.
+// May this request use the org's access key, and with what role? relayChecks.js.
 const callerFor = (req, kind) =>
-  resolveCaller({ req, kind, allowAnonymous: RELAY_ALLOW_ANONYMOUS, authenticateCaller });
+  resolveCaller({ req, kind, allowAnonymous: RELAY_ALLOW_ANONYMOUS, authenticateCaller: callerCheck.authenticate });
 
 app.post("/api/create-session-token", async (req, res) => {
   console.log("inside create-session-token");
@@ -316,7 +327,13 @@ app.get("/", (req, res) => {
   res.send("Server is running on port " + port);
 });
 
-if (ACCESS_KEY && SECRET_ACCESS_KEY && RELAY_ALLOW_ANONYMOUS) console.warn(`WARNING: ${ANONYMOUS_WARNING}`);
+if (ACCESS_KEY && SECRET_ACCESS_KEY && RELAY_ALLOW_ANONYMOUS) {
+  console.warn(`WARNING: ${ANONYMOUS_WARNING}`);
+  if (process.env.RELAY_AUTH) console.warn("WARNING: RELAY_AUTH is ignored while RELAY_ALLOW_ANONYMOUS=true.");
+} else if (ACCESS_KEY && SECRET_ACCESS_KEY) {
+  console.log(`Caller checks: ${callerCheck.summary}`);
+  for (const w of callerCheck.warnings) console.warn(`WARNING: ${w}`);
+}
 if (RELAY_ALLOWED_ORIGINS === true) console.warn("RELAY_ALLOWED_ORIGINS is unset — any browser origin may call this relay.");
 
 // Calls to the app-server (SERVER_URL) verify its certificate unless this is

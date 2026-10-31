@@ -3,3 +3,7 @@ node_modules
 .env.prod
 .env.rlink
 .env.dev
+# Device credentials (RELAY_AUTH=device): the list is deployment data, a
+# secret file belongs on its camera only.
+devices.json
+*.secret

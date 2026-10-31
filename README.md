@@ -26,24 +26,94 @@ app / camera ──POST /api/create-session-token {roomId}──▶ relay (holds
 ## Before you deploy: decide who may use the key
 
 Every request that would use the access key is **refused (401)** until you
-implement `authenticateCaller` in [relayAuth.js](relayAuth.js). Fill it in with
-your own check and return the role to grant:
+choose who may make it. Set `RELAY_AUTH` to one or more of:
 
-- **Your web or mobile app:** verify your own sign-in (session cookie, the JWT
-  your app issued), and grant the role the user has in that room —
-  `{ ok: true, participantType: "moderator" }` for a host, `"participant"` for
-  everyone else. The autoscaler refuses a join above the granted role, so a
-  caller cannot make itself a moderator.
-- **A camera or other device:** verify a per-device credential you provisioned
-  when you installed it, and grant `"participant"`.
+| `RELAY_AUTH` | For | The caller sends |
+|---|---|---|
+| `device` | cameras and other devices | `X-Samvyo-Device-Id: <id>` and `Authorization: Bearer <its secret>` |
+| `jwt` | your web and mobile apps' users | `Authorization: Bearer <a token your sign-in issued>` |
+| `custom` (default) | anything else | whatever your code in [relayAuth.js](relayAuth.js) checks |
+
+With several (`RELAY_AUTH=device,jwt`), a request with `X-Samvyo-Device-Id`
+goes to `device`, one with a bearer token to `jwt`, anything else to `custom`.
+A refusal is final; a request is not tried against the next check.
+
+The relay checks its settings at startup and refuses to start with a broken
+one, so a mistake shows up when you deploy rather than at the first camera.
 
 A session minted with your access key is trusted the way your backend is: it is
 **not** asked for a dashboard room's password. That is why the relay must know
 its callers.
 
-For a local bench only, `RELAY_ALLOW_ANONYMOUS=true` skips the check (and
-forwards the role the caller asks for). The relay warns at startup when it is
-set. Never set it on a deployment anyone else can reach.
+### Cameras: `RELAY_AUTH=device`
+
+Give each camera its own id and secret when you install it:
+
+```
+RELAY_DEVICES_FILE=/etc/samvyo-relay/devices.json \
+  npm run add-device -- --id lobby-cam-1 --secret-out ./lobby-cam-1.secret --room 1234567890
+```
+
+The secret goes to `--secret-out` (mode 0600) and is never printed; the device
+list keeps only its SHA-256. Copy the secret file to the camera and delete it
+here. The camera sends its id and secret on every request, over HTTPS, and is
+granted `participant`.
+
+- `--room` (repeatable) limits the camera to those rooms; another room gets a
+  403. Leave it out to allow any room.
+- A camera's direct-view presence token is minted only for its own camera id:
+  its device id, or the ids given with `--peer-id`.
+- `--rotate` gives an existing camera a new secret; the old one stops working.
+  To take a camera out of service, set `"disabled": true` on it in the list.
+- The relay re-reads the list within seconds of a change: no restart.
+
+An unknown device, a wrong secret and a disabled device all get the same 401,
+so the answer does not reveal which ids exist.
+
+### Your apps' users: `RELAY_AUTH=jwt`
+
+Your app sends the token your sign-in already issues, or a short-lived one your
+backend issues for joining a room. The relay verifies it with exactly one of:
+
+- `RELAY_JWT_JWKS_URL`: your identity provider's key set (Auth0, Cognito,
+  Keycloak, Firebase and so on), fetched over HTTPS and cached;
+- `RELAY_JWT_PUBLIC_KEY_FILE`: a PEM public key (RS256, PS256 or ES256);
+- `RELAY_JWT_SECRET`: a shared HS256 secret of at least 32 characters.
+
+The token must carry an expiry. Set `RELAY_JWT_AUDIENCE` and
+`RELAY_JWT_ISSUER`, or a token your sign-in issued for any other service works
+here too. The relay warns at startup when they are unset.
+
+**The role** comes from a claim (`RELAY_JWT_ROLE_CLAIM`, default `samvyo_role`;
+a dotted path such as `app_metadata.samvyo_role` works too):
+
+- a string is the role in every room: `"participant"`;
+- an object gives it per room: `{ "1234567890": "moderator", "*": "participant" }`.
+
+`RELAY_JWT_ROLE_MAP=host=moderator,member=participant` maps your own role
+names. A token with no role gets `RELAY_JWT_DEFAULT_ROLE` (`participant`). The
+autoscaler refuses a join above the granted role, so a caller cannot make
+itself a moderator.
+
+**Bind tokens to rooms** with `RELAY_JWT_ROOM_CLAIM`: the claim (a room id or a
+list of them) must name the room asked for, or the request gets a 403. Without
+it, a token is good for every room, so a string `"moderator"` role is a
+moderator everywhere; the relay warns about this at startup.
+
+A JWT caller never gets a camera's presence token: that takes a device
+credential.
+
+### Anything else: `RELAY_AUTH=custom`
+
+Write `authenticateCaller` in [relayAuth.js](relayAuth.js): check the request
+your way and return `{ ok: true, participantType }` or a refusal. It can sit
+beside the built-in checks (`RELAY_AUTH=device,custom`).
+
+### A local bench
+
+`RELAY_ALLOW_ANONYMOUS=true` skips every check and forwards the role the caller
+asks for. The relay warns at startup when it is set. Never set it on a
+deployment anyone else can reach.
 
 ## Settings
 
@@ -51,6 +121,17 @@ set. Never set it on a deployment anyone else can reach.
 |---|---|---|
 | `SERVER_URL` | — | the Samvyo app-server |
 | `ACCESS_KEY`, `SECRET_ACCESS_KEY` | — | your org's API key; keep them in your secret store |
+| `RELAY_AUTH` | `custom` | who may use the key: `device`, `jwt`, `custom`, comma-separated |
+| `RELAY_DEVICES_FILE` | — | the device list, for `device` |
+| `RELAY_JWT_JWKS_URL` / `RELAY_JWT_PUBLIC_KEY_FILE` / `RELAY_JWT_SECRET` | — | what verifies a token, for `jwt` (exactly one) |
+| `RELAY_JWT_ISSUER`, `RELAY_JWT_AUDIENCE` | unset | checked when set; set them |
+| `RELAY_JWT_ROLE_CLAIM` | `samvyo_role` | the claim with the role |
+| `RELAY_JWT_ROLE_MAP` | — | your role names → `moderator` / `participant` / `viewer` |
+| `RELAY_JWT_DEFAULT_ROLE` | `participant` | the role when the token has none |
+| `RELAY_JWT_ROOM_CLAIM` | unset | the claim listing the rooms a token is good for |
+| `RELAY_JWT_ALGORITHMS` | `HS256`, or `RS256,PS256,ES256` | accepted algorithms; never a mix of HMAC and public-key |
+| `RELAY_JWT_CLOCK_TOLERANCE_SEC` | 30 | allowed clock difference on expiry |
+| `RELAY_JWT_JWKS_CACHE_SEC` | 600 | how long a fetched key set is used |
 | `RELAY_ALLOWED_ORIGINS` | any | browser origins allowed to call the relay (your meeting UI), comma-separated |
 | `RELAY_RATE_LIMIT_PER_MIN` | 60 | token requests per caller address per minute; 0 = no limit |
 | `RELAY_TRUST_PROXY` | unset | express `trust proxy`, so the caller's address is seen behind a load balancer |
@@ -61,20 +142,17 @@ See [.env.sample](.env.sample).
 
 ## Protect the key itself
 
-Set these on the key's scopes. The dashboard (Settings → API keys) sets the SDK
-types; the IP allowlist and the mint limit are set, for now, with
-`PATCH /api/siteSetting/apiKeys/scopes` as an org admin
-(`{ id, scopes: { ipAllowlist: [...], rateLimit: { sessionMintsPerMinute: N } } }`);
-editing a key in the dashboard keeps them.
+Set these on the key in the Samvyo dashboard (Settings → API keys → edit access
+scope):
 
-- **IP allowlist:** the relay's outbound address(es). A copied key then mints
-  nowhere else.
+- **Allowed IP addresses:** the relay's outbound address(es). A copied key then
+  mints nowhere else.
 - **Separate keys for separate callers:** one key for cameras, restricted to
-  the C++ SDK (`sdkTypes: ["cpp"]`), and one for your web/mobile apps. A leak
-  of one does not expose the other, and you can rotate each on its own.
-- **Mint rate limit:** Samvyo limits each key to 120 session mints a minute by
-  default and refuses above it (429, `SESSION_MINT_RATE_LIMITED`). Set
-  `rateLimit.sessionMintsPerMinute` on a key that needs more — or less.
+  the C++ SDK, and one for your web/mobile apps. A leak of one does not expose
+  the other, and you can rotate each on its own.
+- **Session mints per minute:** Samvyo refuses mints above it (429,
+  `SESSION_MINT_RATE_LIMITED`). Each key gets the deployment's default (shown
+  on the page) unless you set its own.
 - **Expiry and rotation:** give keys an expiry and rotate them; a rotated key
   stops minting at once.
 

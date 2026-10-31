@@ -1,7 +1,12 @@
 "use strict";
 
 /**
- * WHO MAY USE YOUR ACCESS KEY — replace authenticateCaller with your own check.
+ * WHO MAY USE YOUR ACCESS KEY — your own check, for RELAY_AUTH=custom.
+ *
+ * Most deployments need no code: RELAY_AUTH=jwt verifies a token your sign-in
+ * issued (relayJwt.js) and RELAY_AUTH=device checks a camera's own credential
+ * (relayDevices.js). Write authenticateCaller when neither fits — then set
+ * RELAY_AUTH=custom (the default), or e.g. RELAY_AUTH=device,custom.
  *
  * This relay holds your org's access key and secret, and mints Samvyo sessions
  * with them for whoever calls it. A session minted with your key joins your
@@ -33,8 +38,8 @@ async function authenticateCaller(req, ctx) {
     ok: false,
     status: 401,
     message:
-      "This relay authenticates no callers yet: implement authenticateCaller in relayAuth.js " +
-      "(or, for a local bench only, set RELAY_ALLOW_ANONYMOUS=true).",
+      "This relay authenticates no callers yet: set RELAY_AUTH (jwt, device) or implement " +
+      "authenticateCaller in relayAuth.js (or, for a local bench only, set RELAY_ALLOW_ANONYMOUS=true).",
   };
 }
 
