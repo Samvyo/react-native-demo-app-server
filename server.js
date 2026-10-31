@@ -10,7 +10,13 @@ const fs = require("fs");
 const jwt = require("jsonwebtoken");
 
 dotEnv.config();
-app.use(cors());
+const { authenticateCaller } = require("./relayAuth");
+const { resolveCaller, makeRateLimiter, corsOriginsFrom, ANONYMOUS_WARNING } = require("./relayGuard");
+
+// Which browser origins may call this relay (your meeting UI). Unset = any,
+// which a camera-only relay does not care about but a web one should set.
+const RELAY_ALLOWED_ORIGINS = corsOriginsFrom(process.env.RELAY_ALLOWED_ORIGINS);
+app.use(cors({ origin: RELAY_ALLOWED_ORIGINS }));
 app.use(express.json());
 
 const serverUrl = process.env.SERVER_URL;
@@ -18,9 +24,25 @@ const sdkBackendSecret = process.env.SDK_BACKEND_SECRET;
 const meetingPlatformJwtSecret = process.env.MEETING_PLATFORM_JWT_SECRET;
 const ACCESS_KEY = process.env.ACCESS_KEY;
 const SECRET_ACCESS_KEY = process.env.SECRET_ACCESS_KEY;
+// Skips relayAuth.authenticateCaller — a local bench only. See relayAuth.js.
+const RELAY_ALLOW_ANONYMOUS = process.env.RELAY_ALLOW_ANONYMOUS === "true";
+// Requests per caller address per minute to the token endpoint; 0 = no limit.
+// `trust proxy` must match your deployment for req.ip to be the caller's.
+const rateLimit = makeRateLimiter({ perMinute: parseInt(process.env.RELAY_RATE_LIMIT_PER_MIN || "60", 10) });
+if (process.env.RELAY_TRUST_PROXY) app.set("trust proxy", process.env.RELAY_TRUST_PROXY);
+
+// May this request use the org's access key, and with what role? relayAuth.js.
+const callerFor = (req, kind) =>
+  resolveCaller({ req, kind, allowAnonymous: RELAY_ALLOW_ANONYMOUS, authenticateCaller });
 
 app.post("/api/create-session-token", async (req, res) => {
   console.log("inside create-session-token");
+
+  const limited = rateLimit(req.ip);
+  if (!limited.allowed) {
+    res.set("Retry-After", String(limited.retryAfterSec));
+    return res.status(429).send({ success: false, message: "Too many requests — try again shortly" });
+  }
 
   // `probe` forwards to the app-server as a METADATA READ — it resolves the
   // room + region config and returns them without creating a call_record or
@@ -47,6 +69,8 @@ app.post("/api/create-session-token", async (req, res) => {
         message: "presence tokens need ACCESS_KEY / SECRET_ACCESS_KEY",
       });
     }
+    const caller = await callerFor(req, "presence");
+    if (!caller.ok) return res.status(caller.status).send({ success: false, message: caller.message });
     try {
       const r = await axios.post(
         `${serverUrl}/api/directView/presenceToken`,
@@ -155,7 +179,12 @@ app.post("/api/create-session-token", async (req, res) => {
         }
       );
     } else if (ACCESS_KEY && SECRET_ACCESS_KEY) {
-      // SDK mode: access key + secret key path.
+      // SDK mode: access key + secret key path. Only for a caller relayAuth.js
+      // accepts — a session minted with the org's key is not held to a
+      // dashboard room's password — and with the role IT grants (the
+      // autoscaler refuses a join above it), never the role the caller asks for.
+      const caller = await callerFor(req, "session");
+      if (!caller.ok) return res.status(caller.status).send({ success: false, message: caller.message });
       response = await axios.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
@@ -164,6 +193,7 @@ app.post("/api/create-session-token", async (req, res) => {
           secretAccessKey: SECRET_ACCESS_KEY,
           orgIdParam: orgId,
           probe,
+          ...(caller.participantType ? { participantType: caller.participantType } : {}),
         },
         {
           headers: {
@@ -285,6 +315,9 @@ const port = process.env.PORT || 5100;
 app.get("/", (req, res) => {
   res.send("Server is running on port " + port);
 });
+
+if (ACCESS_KEY && SECRET_ACCESS_KEY && RELAY_ALLOW_ANONYMOUS) console.warn(`WARNING: ${ANONYMOUS_WARNING}`);
+if (RELAY_ALLOWED_ORIGINS === true) console.warn("RELAY_ALLOWED_ORIGINS is unset — any browser origin may call this relay.");
 
 // Calls to the app-server (SERVER_URL) verify its certificate unless this is
 // set — only a LAN bench whose app-server has a self-signed certificate needs
