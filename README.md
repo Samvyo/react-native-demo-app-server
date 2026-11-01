@@ -47,28 +47,53 @@ its callers.
 
 ### Cameras: `RELAY_AUTH=device`
 
-Give each camera its own id and secret when you install it:
+Each camera has its own id and secret. **The device id is the camera's
+`PEER_ID`**: the id it joins rooms and registers presence with.
+
+Make the secret on the camera's own box, so it never leaves it, and give the
+relay only its SHA-256. On the gateway (any machine with OpenSSL):
+
+```
+umask 077
+openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=' > /etc/samvyo/lobby-cam-1.secret
+tr -d '\n' < /etc/samvyo/lobby-cam-1.secret | openssl dgst -sha256 -r | cut -d' ' -f1
+```
+
+That file is the camera's `DEVICE_SECRET_FILE`; the second line prints the hash.
+On the relay host:
 
 ```
 RELAY_DEVICES_FILE=/etc/samvyo-relay/devices.json \
-  npm run add-device -- --id lobby-cam-1 --secret-out ./lobby-cam-1.secret --room 1234567890
+  npm run add-device -- --id lobby-cam-1 --sha256 <the 64-character hash> --room 1234567890
 ```
 
-The secret goes to `--secret-out` (mode 0600) and is never printed; the device
-list keeps only its SHA-256. Copy the secret file to the camera and delete it
-here. The camera sends its id and secret on every request, over HTTPS, and is
-granted `participant`.
+For a gateway where you cannot run that, `--secret-out ./lobby-cam-1.secret`
+instead of `--sha256` generates the secret on the relay host and writes it to
+that file (mode 0600); copy it to the camera and delete it here. Either way the
+device list keeps only the hash, and no secret is ever printed. The camera sends
+its id and secret on every request, over HTTPS, and is granted `participant`.
 
 - `--room` (repeatable) limits the camera to those rooms; another room gets a
   403. Leave it out to allow any room.
-- A camera's direct-view presence token is minted only for its own camera id:
-  its device id, or the ids given with `--peer-id`.
-- `--rotate` gives an existing camera a new secret; the old one stops working.
-  To take a camera out of service, set `"disabled": true` on it in the list.
+- A camera's direct-view presence token is minted only for its own id, its
+  `PEER_ID`. (A device list from before this may carry a `peerIds` field: it is
+  ignored, and the relay warns about it at startup.)
+- `--rotate` gives an existing camera a new secret (or hash); the old one stops
+  working. To take a camera out of service, set `"disabled": true` on it in the
+  list.
 - The relay re-reads the list within seconds of a change: no restart.
 
 An unknown device, a wrong secret and a disabled device all get the same 401,
 so the answer does not reveal which ids exist.
+
+**A camera on a relay is still registered with Samvyo.** Every camera that
+publishes into a surveillance room must be on your organisation's camera list,
+whatever minted its token. A relay camera joins with your access key, so it is
+added to that list automatically at its first join, up to your plan's camera
+limit. If your organisation allows only cameras added in advance ("Only cameras
+added here or through the API may join"), add it first: on the dashboard's
+Cameras page, or with `POST /api/v1/cameras` using an API key with the `cameras`
+access. Use the same `PEER_ID` there as here.
 
 ### Your apps' users: `RELAY_AUTH=jwt`
 

@@ -15,13 +15,14 @@
  *
  * The device list (JSON):
  *   { "devices": [
- *       { "id": "lobby-cam-1", "secretSha256": "<64 hex>",
+ *       { "id": "lobby-cam-1",            // the camera's PEER_ID
+ *         "secretSha256": "<64 hex>",
  *         "rooms": ["1234567890"],        // optional: only these rooms
- *         "peerIds": ["lobby-cam-1"],     // optional: presence tokens for these ids
  *         "disabled": false }             // optional: refuse without deleting it
  *   ] }
- * A presence token (direct view) is minted only for the device's own camera id:
- * `peerIds` when set, else its device id.
+ * The device id IS the camera's PEER_ID: the id it joins and registers presence
+ * with. A presence token (direct view) is minted only for that id. A list from
+ * before this may still carry a "peerIds" field; it is ignored, with a warning.
  *
  * The file is re-read when it changes, so adding or disabling a device needs no
  * restart. A change that does not parse is ignored (the relay keeps the last
@@ -41,8 +42,11 @@ const STAT_EVERY_MS = 5000;
 
 const sha256 = (s) => crypto.createHash("sha256").update(String(s), "utf8").digest();
 
-/** Parse and check a device list; throws with the reason. */
-function parseDevices(text) {
+/**
+ * Parse and check a device list; throws with the reason. `warn` hears about what
+ * is accepted but ignored.
+ */
+function parseDevices(text, warn = () => {}) {
   const doc = JSON.parse(text);
   const list = doc && Array.isArray(doc.devices) ? doc.devices : null;
   if (!list) throw new Error('expected { "devices": [ ... ] }');
@@ -54,16 +58,20 @@ function parseDevices(text) {
     if (!/^[0-9a-f]{64}$/i.test(String(d.secretSha256 || ""))) {
       throw new Error(`device "${id}": secretSha256 must be 64 hex characters`);
     }
-    for (const f of ["rooms", "peerIds"]) {
-      if (d[f] != null && !(Array.isArray(d[f]) && d[f].every((x) => typeof x === "string" || typeof x === "number"))) {
-        throw new Error(`device "${id}": ${f} must be a list`);
-      }
+    if (d.rooms != null && !(Array.isArray(d.rooms) && d.rooms.every((x) => typeof x === "string" || typeof x === "number"))) {
+      throw new Error(`device "${id}": rooms must be a list`);
+    }
+    if (d.peerIds !== undefined) {
+      warn(
+        `device "${id}": "peerIds" is no longer used and is ignored. A device's presence token is for its own id, ` +
+          `which must be the camera's PEER_ID; if this camera's PEER_ID is not "${id}", add it again under its PEER_ID. ` +
+          `Remove the field to silence this.`
+      );
     }
     byId.set(id, {
       id,
       hash: Buffer.from(d.secretSha256, "hex"),
       rooms: Array.isArray(d.rooms) && d.rooms.length ? d.rooms.map(String) : null,
-      peerIds: Array.isArray(d.peerIds) && d.peerIds.length ? d.peerIds.map(String) : [id],
       disabled: d.disabled === true,
     });
   }
@@ -72,7 +80,8 @@ function parseDevices(text) {
 
 /** The device list from a file, re-read when the file changes. */
 function makeDeviceStore({ file, now = () => Date.now(), log = console }) {
-  let devices = parseDevices(fs.readFileSync(file, "utf8")); // a bad file at startup is fatal
+  const warn = (w) => log.warn(`relay: device list ${file}: ${w}`);
+  let devices = parseDevices(fs.readFileSync(file, "utf8"), warn); // a bad file at startup is fatal
   let mtimeMs = fs.statSync(file).mtimeMs;
   let checkedAt = now();
 
@@ -83,7 +92,7 @@ function makeDeviceStore({ file, now = () => Date.now(), log = console }) {
         const m = fs.statSync(file).mtimeMs;
         if (m !== mtimeMs) {
           mtimeMs = m;
-          devices = parseDevices(fs.readFileSync(file, "utf8"));
+          devices = parseDevices(fs.readFileSync(file, "utf8"), warn);
           log.info(`relay: device list reloaded (${devices.size} devices)`);
         }
       } catch (e) {
@@ -123,7 +132,7 @@ function makeDeviceCheck({ file, store, log = console }) {
     const body = req.body || {};
     if (ctx && ctx.kind === "presence") {
       const peerId = String(body.peerId || "");
-      if (!device.peerIds.includes(peerId)) {
+      if (peerId !== device.id) {
         return refuse(403, "This device may not mint a presence token for that camera id", `${id}: peerId ${peerId}`);
       }
       return { ok: true, participantType: "participant" };

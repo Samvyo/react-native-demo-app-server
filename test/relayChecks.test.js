@@ -10,7 +10,7 @@ const jwt = require("jsonwebtoken");
 const { buildAuthenticator } = require("../relayChecks");
 const { makeJwtCheck, jwtOptionsFromEnv, makeJwksStore } = require("../relayJwt");
 const { makeDeviceCheck, makeDeviceStore, parseDevices, sha256 } = require("../relayDevices");
-const { addDevice } = require("../scripts/add-device");
+const { addDevice, parseArgs } = require("../scripts/add-device");
 const { authenticateCaller } = require("../relayAuth");
 
 const quiet = { warn() {}, info() {}, error() {} };
@@ -167,18 +167,31 @@ test("device: the right secret grants participant; wrong, unknown and disabled g
   assert.deepStrictEqual([none.ok, none.status], [false, 401]);
 });
 
-test("device: rooms limit sessions (403); presence only for its own camera id", async () => {
+test("device: rooms limit sessions (403); presence only for its own id, its PEER_ID", async () => {
   const check = makeDeviceCheck({
-    file: deviceFile([dev("cam-1", "s1", { rooms: ["100"] }), dev("cam-2", "s2", { peerIds: ["gate-a", "gate-b"] })]),
+    file: deviceFile([dev("cam-1", "s1", { rooms: ["100"] }), dev("cam-2", "s2")]),
     log: quiet,
   });
   const s = (id, secret, body, kind) => check(req({ deviceId: id, token: secret, body }), { kind });
   assert.strictEqual((await s("cam-1", "s1", { roomId: "100" }, "session")).ok, true);
   assert.deepStrictEqual((await s("cam-1", "s1", { roomId: "101" }, "session")).status, 403);
-  assert.strictEqual((await s("cam-1", "s1", { peerId: "cam-1" }, "presence")).ok, true, "default: its device id");
+  assert.strictEqual((await s("cam-1", "s1", { peerId: "cam-1" }, "presence")).ok, true);
   assert.strictEqual((await s("cam-1", "s1", { peerId: "cam-2" }, "presence")).status, 403);
-  assert.strictEqual((await s("cam-2", "s2", { peerId: "gate-b" }, "presence")).ok, true);
-  assert.strictEqual((await s("cam-2", "s2", { peerId: "cam-2" }, "presence")).status, 403);
+  assert.strictEqual((await s("cam-2", "s2", { peerId: "cam-2" }, "presence")).ok, true);
+});
+
+test("device list: a list that still has peerIds loads, with a warning, and the field grants nothing", async () => {
+  const warnings = [];
+  const log = { ...quiet, warn: (m) => warnings.push(m) };
+  const check = makeDeviceCheck({ file: deviceFile([dev("cam-2", "s2", { peerIds: ["gate-a"] }), dev("cam-3", "s3")]), log });
+  assert.strictEqual(warnings.length, 1);
+  assert.match(warnings[0], /device "cam-2": "peerIds" is no longer used/);
+  assert.match(warnings[0], /PEER_ID/);
+  const s = (body) => check(req({ deviceId: "cam-2", token: "s2", body }), { kind: "presence" });
+  assert.strictEqual((await s({ peerId: "gate-a" })).status, 403, "an id from the old field is refused");
+  assert.strictEqual((await s({ peerId: "cam-2" })).ok, true);
+  // Even a malformed old field is only a warning, not a refusal to start.
+  assert.doesNotThrow(() => parseDevices(JSON.stringify({ devices: [dev("a", "x", { peerIds: "gate" })] })));
 });
 
 test("device list: re-read when it changes; a broken edit keeps the last good list", async () => {
@@ -223,8 +236,55 @@ test("add-device: the secret goes to a 0600 file, only its hash to the list, and
   const doc = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.deepStrictEqual(doc.devices[0].rooms, ["555"], "a rotation keeps the rooms");
   assert.notStrictEqual(doc.devices[0].secretSha256, sha256(secret).toString("hex"), "the old secret stops working");
-  assert.throws(() => addDevice({ id: "x", file }), /secret-out/);
+  assert.throws(() => addDevice({ id: "x", file }), /--sha256.*--secret-out/);
   assert.throws(() => addDevice({ id: "bad id!", secretOut: path.join(dir, "c"), file }), /--id/);
+});
+
+test("add-device --sha256: a secret made on the camera's box works, and only its hash is stored", async () => {
+  const dir = tmpdir();
+  const file = path.join(dir, "devices.json");
+  // What the README's openssl recipe makes: 32 random bytes as base64url, no padding.
+  const secret = crypto.randomBytes(32).toString("base64url");
+  const hash = sha256(secret).toString("hex").toUpperCase();
+  addDevice({ id: "gate-7", sha256: hash, file, rooms: ["555"] });
+  const text = fs.readFileSync(file, "utf8");
+  assert.ok(!text.includes(secret));
+  assert.deepStrictEqual(JSON.parse(text).devices, [{ id: "gate-7", secretSha256: hash.toLowerCase(), rooms: ["555"] }]);
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["devices.json"], "no secret file is written");
+
+  const check = makeDeviceCheck({ file, log: quiet });
+  const ok = await check(req({ deviceId: "gate-7", token: secret, body: { roomId: "555" } }), { kind: "session" });
+  assert.deepStrictEqual(ok, { ok: true, participantType: "participant" });
+  const wrong = await check(req({ deviceId: "gate-7", token: "not-it", body: { roomId: "555" } }), { kind: "session" });
+  assert.strictEqual(wrong.status, 401);
+
+  // A rotation by hash replaces it; the old secret stops working.
+  const next = crypto.randomBytes(32).toString("base64url");
+  addDevice({ id: "gate-7", sha256: sha256(next).toString("hex"), file, rotate: true });
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.strictEqual(doc.devices[0].secretSha256, sha256(next).toString("hex"));
+  assert.deepStrictEqual(doc.devices[0].rooms, ["555"], "a rotation keeps the rooms");
+});
+
+test("add-device: an invalid hash, both sources, and the removed --peer-id are refused, with the list untouched", () => {
+  const dir = tmpdir();
+  const file = path.join(dir, "devices.json");
+  const good = sha256("x").toString("hex");
+  for (const bad of ["abc", good.slice(1), `${good}0`, good.replace(/^./, "g"), ""]) {
+    assert.throws(() => addDevice({ id: "cam-1", sha256: bad, file }), /--sha256 must be 64 hex/, `refused: "${bad}"`);
+  }
+  assert.throws(() => addDevice({ id: "cam-1", sha256: good, secretOut: path.join(dir, "s"), file }), /not both/);
+  assert.ok(!fs.existsSync(file), "nothing written");
+  assert.ok(!fs.existsSync(path.join(dir, "s")));
+  assert.throws(() => parseArgs(["--id", "cam-1", "--peer-id", "gate-a", "--sha256", good]), /--peer-id was removed/);
+  assert.deepStrictEqual(parseArgs(["--id", "cam-1", "--sha256", good, "--room", "9"]), { rooms: ["9"], id: "cam-1", sha256: good });
+});
+
+test("add-device: rotating a device from an old list drops its peerIds", () => {
+  const file = deviceFile([dev("cam-2", "s2", { peerIds: ["gate-a"], rooms: ["1"] })]);
+  addDevice({ id: "cam-2", sha256: sha256("new").toString("hex"), file, rotate: true });
+  const [d] = JSON.parse(fs.readFileSync(file, "utf8")).devices;
+  assert.deepStrictEqual(Object.keys(d).sort(), ["id", "rooms", "secretSha256"]);
 });
 
 // ─── RELAY_AUTH ──────────────────────────────────────────────────────────────
