@@ -60,7 +60,7 @@ app.post("/api/create-session-token", async (req, res) => {
   // issuing a token. The lobby uses it to populate the region dropdown; before
   // it existed, every lobby view minted a real session and left behind a
   // call_record nobody joined and nothing could close.
-  const { roomId, uuid, orgId, sdkMode, probe, invite } = req.body;
+  const { roomId, uuid, orgId, sdkMode, probe, invite, presenterInvite } = req.body;
   // Dashboard mode (sdkMode === false) mints a uuid/room session token with NO
   // access key/secret key — the autoscaler attributes the recording to the
   // room's owners so it surfaces under meeting logs. SDK mode (default) uses the
@@ -181,6 +181,10 @@ app.post("/api/create-session-token", async (req, res) => {
           // room's password; the app-server verifies it at mint. Dashboard mode
           // only: an access-key session is never held to a dashboard password.
           ...(invite ? { invite } : {}),
+          // A presenter link token (`?pinv=`): in an event room, the app-server
+          // grants the presenter role only with a valid one (a non-owner is a
+          // viewer otherwise). Dashboard mode only, like the invite.
+          ...(presenterInvite ? { presenterInvite } : {}),
         },
         {
           headers: {
@@ -269,6 +273,10 @@ app.post("/api/create-session-token", async (req, res) => {
         // why not — the meeting UI asks for the password when it was refused.
         inviteAccepted: response.data.inviteAccepted ?? null,
         inviteRefusal: response.data.inviteRefusal ?? null,
+        // Whether the presenter link sent was honoured (null = none sent, or
+        // not an event room), and why not (expired / revoked / wrong_room).
+        presenterInviteAccepted: response.data.presenterInviteAccepted ?? null,
+        presenterInviteRefusal: response.data.presenterInviteRefusal ?? null,
       });
     }
 
