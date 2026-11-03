@@ -109,9 +109,11 @@ const DUMMY_HASH = sha256("no such device");
 
 function makeDeviceCheck({ file, store, log = console }) {
   const devices = store || makeDeviceStore({ file, log });
-  const refuse = (status, message, why) => {
+  // A camera's own 403s carry the same code Samvyo's token URL sends, so the camera
+  // can tell them from the org's billing-state 403s, which it must keep retrying.
+  const refuse = (status, message, why, code) => {
     log.warn(`relay: device refused (${why})`);
-    return { ok: false, status, message };
+    return code ? { ok: false, status, message, code } : { ok: false, status, message };
   };
 
   const check = async function checkDevice(req, ctx) {
@@ -133,13 +135,13 @@ function makeDeviceCheck({ file, store, log = console }) {
     if (ctx && ctx.kind === "presence") {
       const peerId = String(body.peerId || "");
       if (peerId !== device.id) {
-        return refuse(403, "This device may not mint a presence token for that camera id", `${id}: peerId ${peerId}`);
+        return refuse(403, "This device may not mint a presence token for that camera id", `${id}: peerId ${peerId}`, "DEVICE_PRESENCE_NOT_ALLOWED");
       }
       return { ok: true, participantType: "participant" };
     }
     const roomId = String(body.roomId ?? "");
     if (device.rooms && !device.rooms.includes(roomId)) {
-      return refuse(403, "This device may not join that room", `${id}: room ${roomId}`);
+      return refuse(403, "This device may not join that room", `${id}: room ${roomId}`, "DEVICE_ROOM_NOT_ALLOWED");
     }
     return { ok: true, participantType: "participant" };
   };

@@ -174,9 +174,11 @@ test("device: rooms limit sessions (403); presence only for its own id, its PEER
   });
   const s = (id, secret, body, kind) => check(req({ deviceId: id, token: secret, body }), { kind });
   assert.strictEqual((await s("cam-1", "s1", { roomId: "100" }, "session")).ok, true);
-  assert.deepStrictEqual((await s("cam-1", "s1", { roomId: "101" }, "session")).status, 403);
+  const room = await s("cam-1", "s1", { roomId: "101" }, "session");
+  assert.deepStrictEqual([room.status, room.code], [403, "DEVICE_ROOM_NOT_ALLOWED"]);
   assert.strictEqual((await s("cam-1", "s1", { peerId: "cam-1" }, "presence")).ok, true);
-  assert.strictEqual((await s("cam-1", "s1", { peerId: "cam-2" }, "presence")).status, 403);
+  const other = await s("cam-1", "s1", { peerId: "cam-2" }, "presence");
+  assert.deepStrictEqual([other.status, other.code], [403, "DEVICE_PRESENCE_NOT_ALLOWED"]);
   assert.strictEqual((await s("cam-2", "s2", { peerId: "cam-2" }, "presence")).ok, true);
 });
 

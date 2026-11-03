@@ -81,7 +81,7 @@ app.post("/api/create-session-token", async (req, res) => {
       });
     }
     const caller = await callerFor(req, "presence");
-    if (!caller.ok) return res.status(caller.status).send({ success: false, message: caller.message });
+    if (!caller.ok) return res.status(caller.status).send({ success: false, ...(caller.code ? { code: caller.code } : {}), message: caller.message });
     try {
       const r = await axios.post(
         `${serverUrl}/api/directView/presenceToken`,
@@ -199,7 +199,7 @@ app.post("/api/create-session-token", async (req, res) => {
       // dashboard room's password — and with the role IT grants (the
       // autoscaler refuses a join above it), never the role the caller asks for.
       const caller = await callerFor(req, "session");
-      if (!caller.ok) return res.status(caller.status).send({ success: false, message: caller.message });
+      if (!caller.ok) return res.status(caller.status).send({ success: false, ...(caller.code ? { code: caller.code } : {}), message: caller.message });
       response = await axios.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
@@ -293,7 +293,11 @@ app.post("/api/create-session-token", async (req, res) => {
       error.response?.data?.message ||
       error.response?.data?.error ||
       "Internal Server Error";
-    return res.status(status).json({ error: message, success: false });
+    // Pass the app-server's code through (e.g. ORG_SUSPENDED, INSUFFICIENT_CREDITS,
+    // ROOM_OF_ANOTHER_ORG): a camera keeps retrying a billing-state 403 and stops
+    // only on its own refusals, so it must see which one this is.
+    const code = error.response?.data?.code;
+    return res.status(status).json({ error: message, success: false, ...(code ? { code } : {}) });
   }
 });
 
