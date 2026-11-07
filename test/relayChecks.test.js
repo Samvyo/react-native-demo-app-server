@@ -149,7 +149,7 @@ const deviceFile = (devices) => {
 };
 const dev = (id, secret, extra = {}) => ({ id, secretSha256: sha256(secret).toString("hex"), ...extra });
 
-test("device: the right secret grants participant; wrong, unknown and disabled get the same 401", async () => {
+test("device: the right secret grants participant; wrong and unknown get the same 401", async () => {
   const check = makeDeviceCheck({
     file: deviceFile([dev("cam-1", "s1"), dev("cam-off", "s2", { disabled: true })]),
     log: quiet,
@@ -160,11 +160,18 @@ test("device: the right secret grants participant; wrong, unknown and disabled g
   const outs = [
     await check(req({ deviceId: "cam-1", token: "wrong", body: { roomId: "9" } }), { kind: "session" }),
     await check(req({ deviceId: "nobody", token: "s1", body: { roomId: "9" } }), { kind: "session" }),
-    await check(req({ deviceId: "cam-off", token: "s2", body: { roomId: "9" } }), { kind: "session" }),
+    await check(req({ deviceId: "cam-off", token: "wrong", body: { roomId: "9" } }), { kind: "session" }),
   ];
   for (const o of outs) assert.deepStrictEqual(o, { ok: false, status: 401, message: "Device credentials not accepted" });
   const none = await check(req({ deviceId: "cam-1", body: { roomId: "9" } }), { kind: "session" });
   assert.deepStrictEqual([none.ok, none.status], [false, 401]);
+});
+
+test("device: a disabled camera's own secret gets 403 CAMERA_DISABLED, as the token URL answers", async () => {
+  const check = makeDeviceCheck({ file: deviceFile([dev("cam-off", "s2", { disabled: true })]), log: quiet });
+  const want = { ok: false, status: 403, message: "An admin has disabled this camera", code: "CAMERA_DISABLED" };
+  assert.deepStrictEqual(await check(req({ deviceId: "cam-off", token: "s2", body: { roomId: "9" } }), { kind: "session" }), want);
+  assert.deepStrictEqual(await check(req({ deviceId: "cam-off", token: "s2", body: { peerId: "cam-off" } }), { kind: "presence" }), want);
 });
 
 test("device: rooms limit sessions (403); presence only for its own id, its PEER_ID", async () => {

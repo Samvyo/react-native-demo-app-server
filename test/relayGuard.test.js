@@ -30,6 +30,14 @@ test("a refusing or throwing hook refuses", async () => {
   assert.strictEqual(t.status, 500);
 });
 
+test("a refusing hook's code reaches the caller; a refusal with none has no code field", async () => {
+  const hook = async () => ({ ok: false, status: 403, message: "no", code: "CAMERA_DISABLED" });
+  const r = await resolveCaller({ req: {}, kind: "session", allowAnonymous: false, authenticateCaller: hook });
+  assert.deepStrictEqual(r, { ok: false, status: 403, message: "no", code: "CAMERA_DISABLED" });
+  const none = await resolveCaller({ req: {}, kind: "session", allowAnonymous: false, authenticateCaller: async () => ({ ok: false, status: 403, message: "no" }) });
+  assert.strictEqual("code" in none, false);
+});
+
 test("bench anonymous mode admits and forwards the caller's own role", async () => {
   const r = await resolveCaller({ req: { body: { participantType: "moderator" } }, kind: "session", allowAnonymous: true, authenticateCaller });
   assert.deepStrictEqual(r, { ok: true, anonymous: true, participantType: "moderator" });

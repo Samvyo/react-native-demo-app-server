@@ -83,8 +83,10 @@ its id and secret on every request, over HTTPS, and is granted `participant`.
   list.
 - The relay re-reads the list within seconds of a change: no restart.
 
-An unknown device, a wrong secret and a disabled device all get the same 401,
-so the answer does not reveal which ids exist.
+An unknown device and a wrong secret get the same 401, so the answer does not
+reveal which ids exist. A disabled camera that sends its own correct secret gets
+403 with the code `CAMERA_DISABLED`: it keeps retrying slowly and comes back by
+itself once you remove the flag.
 
 **A camera on a relay is still registered with Samvyo.** Every camera that
 publishes into a surveillance room must be on your organisation's camera list,

@@ -126,10 +126,15 @@ function makeDeviceCheck({ file, store, log = console }) {
     }
     const device = devices().get(id);
     const match = crypto.timingSafeEqual(sha256(secret), device ? device.hash : DUMMY_HASH);
-    // One answer for an unknown device, a wrong secret and a disabled device:
-    // the caller learns nothing about which ids exist.
-    if (!device || !match || device.disabled) {
-      return refuse(401, "Device credentials not accepted", `${id}: ${!device ? "unknown id" : !match ? "wrong secret" : "disabled"}`);
+    // One answer for an unknown device and a wrong secret: the caller learns nothing
+    // about which ids exist.
+    if (!device || !match) {
+      return refuse(401, "Device credentials not accepted", `${id}: ${!device ? "unknown id" : "wrong secret"}`);
+    }
+    // The camera's own correct secret, and it is disabled: the token URL's answer, so
+    // the camera retries slowly and returns once it is enabled again.
+    if (device.disabled) {
+      return refuse(403, "An admin has disabled this camera", `${id}: disabled`, "CAMERA_DISABLED");
     }
     const body = req.body || {};
     if (ctx && ctx.kind === "presence") {

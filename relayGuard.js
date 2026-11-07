@@ -41,6 +41,10 @@ async function resolveCaller({ req, kind, allowAnonymous, authenticateCaller }) 
     ok: false,
     status: (r && r.status) || 401,
     message: (r && r.message) || "Caller not authenticated",
+    // A camera decides what to do from this code: CAMERA_DISABLED and the org's
+    // billing 403s retry slowly, a room it may not join stops it. Without it, every
+    // 403 from a device check reads the same.
+    ...(r && r.code ? { code: String(r.code) } : {}),
   };
 }
 
