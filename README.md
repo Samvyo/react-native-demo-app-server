@@ -162,6 +162,7 @@ deployment anyone else can reach.
 | `RELAY_ALLOWED_ORIGINS` | any | browser origins allowed to call the relay (your meeting UI), comma-separated |
 | `RELAY_RATE_LIMIT_PER_MIN` | 60 | token requests per caller address per minute; 0 = no limit |
 | `RELAY_TRUST_PROXY` | unset | express `trust proxy`, so the caller's address is seen behind a load balancer |
+| `RELAY_UPSTREAM_TIMEOUT_MS` | 8000 | the time limit on each call to the app-server, connecting included; the relay answers 504 when it runs out. Keep it under 10000: a camera gives up on the relay after 10 s. 0 = no limit |
 | `RELAY_ALLOW_ANONYMOUS` | false | local bench only — see above |
 | `CERT_DIR` | unset | serve HTTPS from `server.key` + `server.crt`; unset = HTTP behind your TLS terminator |
 

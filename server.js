@@ -13,12 +13,23 @@ dotEnv.config();
 const { authenticateCaller } = require("./relayAuth");
 const { resolveCaller, makeRateLimiter, corsOriginsFrom, ANONYMOUS_WARNING } = require("./relayGuard");
 const { buildAuthenticator } = require("./relayChecks");
+const { timeoutFrom, makeUpstream, isTimeout } = require("./relayUpstream");
 
 // Who may use the access key: RELAY_AUTH = device, jwt and/or custom (relayAuth.js).
 // A misconfiguration stops the relay here rather than at the first camera.
 let callerCheck;
 try {
   callerCheck = buildAuthenticator(process.env, { authenticateCaller });
+} catch (e) {
+  console.error(`FATAL: ${e.message}`);
+  process.exit(1);
+}
+
+// Every call to the app-server has a time limit (relayUpstream.js): a camera gives
+// up on this relay after 10 s, so the relay answers first.
+let upstream;
+try {
+  upstream = makeUpstream(timeoutFrom(process.env));
 } catch (e) {
   console.error(`FATAL: ${e.message}`);
   process.exit(1);
@@ -83,7 +94,7 @@ app.post("/api/create-session-token", async (req, res) => {
     const caller = await callerFor(req, "presence");
     if (!caller.ok) return res.status(caller.status).send({ success: false, ...(caller.code ? { code: caller.code } : {}), message: caller.message });
     try {
-      const r = await axios.post(
+      const r = await upstream.post(
         `${serverUrl}/api/directView/presenceToken`,
         { accessKey: ACCESS_KEY, secretAccessKey: SECRET_ACCESS_KEY, cameraId: peerId },
         { validateStatus: () => true }
@@ -104,6 +115,9 @@ app.post("/api/create-session-token", async (req, res) => {
       });
     } catch (error) {
       console.error("Error minting presence token:", error.message);
+      if (isTimeout(error)) {
+        return res.status(504).send({ success: false, message: `app-server did not answer within ${upstream.timeoutMs} ms` });
+      }
       return res.status(502).send({ success: false, message: "app-server unreachable" });
     }
   }
@@ -171,7 +185,7 @@ app.post("/api/create-session-token", async (req, res) => {
       const userToken = String(req.headers["x-samvyo-user-token"] || "")
         .replace(/^Bearer\s+/i, "")
         .trim();
-      response = await axios.post(
+      response = await upstream.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
           roomId,
@@ -200,7 +214,7 @@ app.post("/api/create-session-token", async (req, res) => {
       // autoscaler refuses a join above it), never the role the caller asks for.
       const caller = await callerFor(req, "session");
       if (!caller.ok) return res.status(caller.status).send({ success: false, ...(caller.code ? { code: caller.code } : {}), message: caller.message });
-      response = await axios.post(
+      response = await upstream.post(
         `${serverUrl}/api/siteSetting/sessionToken`,
         {
           roomId,
@@ -218,7 +232,7 @@ app.post("/api/create-session-token", async (req, res) => {
       );
     } else {
       // Fallback to existing behaviour using the sdkSessionToken route
-      response = await axios.post(
+      response = await upstream.post(
         `${serverUrl}/api/siteSetting/sdkSessionToken`,
         {
           roomId,
@@ -286,8 +300,15 @@ app.post("/api/create-session-token", async (req, res) => {
         response.data?.message || "Failed to fetch session token from server",
     });
   } catch (error) {
-    console.error("Error creating session token:", error);
-    console.log("Error message", error.message);
+    // Never the error object itself: axios puts the request on it, and the
+    // request carries the org's secret access key and the backend secret.
+    console.error(
+      "Error creating session token:", error.message,
+      error.response ? `(app-server ${error.response.status}${error.response.data?.code ? ` ${error.response.data.code}` : ""})` : ""
+    );
+    if (isTimeout(error)) {
+      return res.status(504).json({ error: `app-server did not answer within ${upstream.timeoutMs} ms`, success: false });
+    }
     const status = error.response?.status || 500;
     const message =
       error.response?.data?.message ||
